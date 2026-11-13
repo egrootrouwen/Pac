@@ -161,7 +161,7 @@ const GHOST_COLORS = ["#ff4d4d", "#4dd2ff", "#ffb84d", "#ff8ad8"];
 const scoreTargets = [150, 300, 500, 800];
 
 function makeDots() {
-  dots = []; pellets = []; pelletsLeft = 0;
+  dots = []; pelletsLeft = 0;
   for (let r = 0; r < ROWS; r++) {
     dots[r] = [];
     for (let c = 0; c < COLS; c++) {
@@ -188,10 +188,10 @@ function spawnPlayers() {
 
 function spawnGhosts() {
   ghosts = [
-    { r: 11, c: 12, x: 12, y: 11, dir: "left",  color: GHOST_COLORS[0], prog: 0 },
-    { r: 11, c: 15, x: 15, y: 11, dir: "right", color: GHOST_COLORS[1], prog: 0 },
-    { r: 8,  c: 9,  x: 9,  y: 8,  dir: "up",    color: GHOST_COLORS[2], prog: 0 },
-    { r: 8,  c: 18, x: 18, y: 8,  dir: "down",  color: GHOST_COLORS[3], prog: 0 }
+    { r: 11, c: 12, x: 12, y: 11, dir: "up", color: GHOST_COLORS[0], prog: 0 },
+    { r: 11, c: 15, x: 15, y: 11, dir: "up", color: GHOST_COLORS[1], prog: 0 },
+    { r: 8,  c: 9,  x: 9,  y: 8,  dir: "up", color: GHOST_COLORS[2], prog: 0 },
+    { r: 8,  c: 18, x: 18, y: 8,  dir: "up", color: GHOST_COLORS[3], prog: 0 }
   ];
 }
 
@@ -262,8 +262,10 @@ function canMove(ent, dir) {
 function moveEntity(ent, speed, chooseDir) {
   ent.prog = ent.prog || 0;
   if (!canMove(ent, ent.dir)) {
+    ent.dir = chooseDir(ent);
     ent.prog = 0;
-  } else {
+  }
+  if (canMove(ent, ent.dir)) {
     ent.prog += speed;
   }
   while (ent.prog >= 1) {
@@ -296,8 +298,16 @@ function ghostChooseDir(g) {
   if (!pool.length) return g.dir;
   // achtervolg dichtstbijzijnde speler (of zwervend als bang)
   if (frightTimer > 0) return pool[Math.floor(Math.random() * pool.length)];
+  const alive = players.filter(p => p.dead === 0);
+  if (!alive.length) return pool[Math.floor(Math.random() * pool.length)];
+  let target = alive[0], targetD = Infinity;
+  for (const p of alive) {
+    const dist = Math.abs(g.c - p.c) + Math.abs(g.r - p.r);
+    if (dist < targetD) { targetD = dist; target = p; }
+  }
+  // ver van spelers: gewoon zwerven, anders achtervolgen
+  if (targetD > 9) return pool[Math.floor(Math.random() * pool.length)];
   let best = pool[0], bestD = Infinity;
-  const target = players[(frame % 240 < 120) ? 0 : 1];
   for (const d of pool) {
     const dd = DIRS[d];
     const dist = Math.abs(g.c + dd.x - target.c) + Math.abs(g.r + dd.y - target.r);
