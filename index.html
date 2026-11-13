@@ -1,0 +1,569 @@
+<!DOCTYPE html>
+<html lang="nl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>Pac Duo — 2 spelers</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
+  html, body {
+    width: 100%; height: 100%;
+    background: #000;
+    overflow: hidden;
+    touch-action: none;
+    overscroll-behavior: none;
+    font-family: "Courier New", monospace;
+  }
+  #game {
+    display: block;
+    width: 100vw;
+    height: 100vh;
+    touch-action: none;
+  }
+  .dpad {
+    position: fixed;
+    bottom: calc(12px + env(safe-area-inset-bottom));
+    width: 132px; height: 132px;
+    display: grid;
+    grid-template: repeat(3, 1fr) / repeat(3, 1fr);
+    gap: 4px;
+    opacity: 0.85;
+    z-index: 10;
+  }
+  #pad1 { left: calc(12px + env(safe-area-inset-left)); }
+  #pad2 { right: calc(12px + env(safe-area-inset-right)); }
+  .dbtn {
+    background: rgba(255,255,255,0.10);
+    border: 1px solid rgba(255,255,255,0.25);
+    border-radius: 10px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 22px; color: rgba(255,255,255,0.8);
+    touch-action: none;
+  }
+  .dbtn:active { background: rgba(255,255,255,0.3); }
+  #p1up    { grid-area: 1 / 2; } #p1left { grid-area: 2 / 1; }
+  #p1right { grid-area: 2 / 3; } #p1down { grid-area: 3 / 2; }
+  #p2up    { grid-area: 1 / 2; } #p2left { grid-area: 2 / 1; }
+  #p2right { grid-area: 2 / 3; } #p2down { grid-area: 3 / 2; }
+  .padlabel {
+    position: fixed;
+    bottom: calc(152px + env(safe-area-inset-bottom));
+    font-size: 13px; letter-spacing: 1px;
+    z-index: 10;
+  }
+  #lab1 { left: calc(30px + env(safe-area-inset-left)); color: #ffe14d; }
+  #lab2 { right: calc(30px + env(safe-area-inset-right)); color: #ff9de2; }
+  #overlay {
+    position: fixed; inset: 0;
+    background: rgba(0,0,0,0.82);
+    display: flex; flex-direction: column;
+    align-items: center; justify-content: center;
+    z-index: 20; text-align: center; padding: 20px;
+  }
+  #overlay h1 { color: #ffe14d; font-size: clamp(28px, 7vw, 54px); margin-bottom: 10px; }
+  #overlay p  { color: #ccc; font-size: clamp(13px, 3vw, 18px); margin: 6px 0; max-width: 640px; line-height: 1.5; }
+  #overlay .p1 { color: #ffe14d; } #overlay .p2 { color: #ff9de2; }
+  #startBtn {
+    margin-top: 22px;
+    padding: 14px 44px;
+    font-size: 20px; font-family: inherit; font-weight: bold;
+    color: #000; background: #ffe14d;
+    border: none; border-radius: 12px;
+  }
+  #startBtn:active { background: #fff; }
+  #targetScore { margin-top: 16px; color: #7fdbff; font-size: 16px; }
+  .hide { display: none !important; }
+</style>
+</head>
+<body>
+<canvas id="game"></canvas>
+
+<div class="padlabel" id="lab1">SPELER 1</div>
+<div class="padlabel" id="lab2">SPELER 2</div>
+<div class="dpad" id="pad1">
+  <div class="dbtn" id="p1up">▲</div>
+  <div class="dbtn" id="p1left">◀</div>
+  <div class="dbtn" id="p1right">▶</div>
+  <div class="dbtn" id="p1down">▼</div>
+</div>
+<div class="dpad" id="pad2">
+  <div class="dbtn" id="p2up">▲</div>
+  <div class="dbtn" id="p2left">◀</div>
+  <div class="dbtn" id="p2right">▶</div>
+  <div class="dbtn" id="p2down">▼</div>
+</div>
+
+<div id="overlay">
+  <h1>PAC DUO</h1>
+  <p>Twee spelers, één iPad. <span class="p1">Geel (links)</span> en <span class="p2">Roze (rechts)</span> racen door het doolhof.</p>
+  <p>Eet bolletjes voor punten. Grote bollen maken jou <b>jager</b>: raak dan de ander om punten te stelen! Spookjes vermijden — of vang ze voor bonuspunten.</p>
+  <p>Wie als eerste de doelscore haalt, wint.</p>
+  <div id="targetScore">Doelscore: <span id="tsVal">300</span> — tik op het getal om te wisselen</div>
+  <button id="startBtn">START</button>
+</div>
+
+<script>
+"use strict";
+
+// ---------- Maze (28 x 17) ----------
+// # muur  . bol  o powerbol  ' leeg  - spookhuisdeur
+const MAZE = [
+  "############################",
+  "#............##............#",
+  "#.####.#####.##.#####.####.#",
+  "#o####.#####.##.#####.####o#",
+  "#.####.#####.##.#####.####.#",
+  "#..........................#",
+  "#.####.##.########.##.####.#",
+  "#.####.##.########.##.####.#",
+  "#......##....##....##......#",
+  "######.#####.##.#####.######",
+  "######.#####.##.#####.######",
+  "######.##..........##.######",
+  "######.##.###--###.##.######",
+  "#............##............#",
+  "#.####.#####.##.#####.####.#",
+  "#o.........................#",
+  "############################"
+];
+const COLS = MAZE[0].length, ROWS = MAZE.length;
+
+// ---------- Canvas ----------
+const canvas = document.getElementById("game");
+const ctx = canvas.getContext("2d");
+let W = 0, H = 0, TILE = 24, OX = 0, OY = 0;
+
+function resize() {
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  W = window.innerWidth; H = window.innerHeight;
+  canvas.width = W * dpr; canvas.height = H * dpr;
+  canvas.style.width = W + "px"; canvas.style.height = H + "px";
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+  const padBottom = 170; // ruimte voor de twee d-pads
+  const availW = W - 8, availH = H - padBottom - 60;
+  TILE = Math.floor(Math.min(availW / COLS, availH / ROWS));
+  TILE = Math.max(10, TILE);
+  OX = Math.floor((W - TILE * COLS) / 2);
+  OY = Math.floor(50 + (availH - TILE * ROWS) / 2);
+}
+window.addEventListener("resize", resize);
+resize();
+
+// ---------- Game state ----------
+const DIRS = { up: {x:0,y:-1}, down: {x:0,y:1}, left: {x:-1,y:0}, right: {x:1,y:0} };
+let dots, pelletsLeft, state, winner, targetScore = 300;
+let players, ghosts, frame = 0, frightTimer = 0, msgTimer = 0, msg = "";
+const GHOST_COLORS = ["#ff4d4d", "#4dd2ff", "#ffb84d", "#ff8ad8"];
+
+const scoreTargets = [150, 300, 500, 800];
+
+function makeDots() {
+  dots = []; pellets = []; pelletsLeft = 0;
+  for (let r = 0; r < ROWS; r++) {
+    dots[r] = [];
+    for (let c = 0; c < COLS; c++) {
+      const ch = MAZE[r][c];
+      if (ch === ".") { dots[r][c] = 1; pelletsLeft++; }
+      else if (ch === "o") { dots[r][c] = 2; pelletsLeft++; }
+      else dots[r][c] = 0;
+    }
+  }
+}
+
+function isWall(r, c) {
+  if (r < 0 || r >= ROWS || c < 0 || c >= COLS) return true;
+  const ch = MAZE[r][c];
+  return ch === "#" || ch === "-";
+}
+
+function spawnPlayers() {
+  players = [
+    { id: 0, name: "Geel",  color: "#ffe14d", r: 15, c: 1,  x: 1,  y: 15, dir: "right", want: "right", score: 0, power: 0, dead: 0, home: {r:15,c:1} },
+    { id: 1, name: "Roze",  color: "#ff9de2", r: 15, c: 26, x: 26, y: 15, dir: "left",  want: "left",  score: 0, power: 0, dead: 0, home: {r:15,c:26} }
+  ];
+}
+
+function spawnGhosts() {
+  ghosts = [
+    { r: 11, c: 12, x: 12, y: 11, dir: "left",  color: GHOST_COLORS[0], prog: 0 },
+    { r: 11, c: 15, x: 15, y: 11, dir: "right", color: GHOST_COLORS[1], prog: 0 },
+    { r: 8,  c: 9,  x: 9,  y: 8,  dir: "up",    color: GHOST_COLORS[2], prog: 0 },
+    { r: 8,  c: 18, x: 18, y: 8,  dir: "down",  color: GHOST_COLORS[3], prog: 0 }
+  ];
+}
+
+function startGame() {
+  makeDots(); spawnPlayers(); spawnGhosts();
+  state = "play"; winner = null; frightTimer = 0; msgTimer = 0;
+  document.getElementById("overlay").classList.add("hide");
+}
+
+// ---------- Input ----------
+function bindPad(prefix, playerIdx) {
+  const map = {
+    up: prefix + "up", down: prefix + "down",
+    left: prefix + "left", right: prefix + "right"
+  };
+  for (const [dir, id] of Object.entries(map)) {
+    const el = document.getElementById(id);
+    const set = e => { e.preventDefault(); if (players && players[playerIdx]) players[playerIdx].want = dir; };
+    el.addEventListener("touchstart", set, { passive: false });
+    el.addEventListener("mousedown", set);
+  }
+}
+bindPad("p1", 0);
+bindPad("p2", 1);
+
+// Swipe op eigen helft van het scherm
+let swipeStart = null;
+canvas.addEventListener("touchstart", e => {
+  const t = e.changedTouches[0];
+  swipeStart = { x: t.clientX, y: t.clientY, side: t.clientX < W / 2 ? 0 : 1 };
+}, { passive: true });
+canvas.addEventListener("touchmove", e => {
+  if (!swipeStart || !players) return;
+  const t = e.changedTouches[0];
+  const dx = t.clientX - swipeStart.x, dy = t.clientY - swipeStart.y;
+  if (Math.abs(dx) < 24 && Math.abs(dy) < 24) return;
+  const dir = Math.abs(dx) > Math.abs(dy) ? (dx > 0 ? "right" : "left") : (dy > 0 ? "down" : "up");
+  players[swipeStart.side].want = dir;
+  swipeStart = null;
+}, { passive: true });
+canvas.addEventListener("touchend", () => { swipeStart = null; }, { passive: true });
+
+// Toetsenbord (handig voor testen op desktop)
+const keyMap = {
+  ArrowUp: [0, "up"], ArrowDown: [0, "down"], ArrowLeft: [0, "left"], ArrowRight: [0, "right"],
+  w: [1, "up"], s: [1, "down"], a: [1, "left"], d: [1, "right"]
+};
+window.addEventListener("keydown", e => {
+  const m = keyMap[e.key];
+  if (m && players) { players[m[0]].want = m[1]; e.preventDefault(); }
+});
+
+// Doelscore wisselen
+document.getElementById("targetScore").addEventListener("click", () => {
+  const i = (scoreTargets.indexOf(targetScore) + 1) % scoreTargets.length;
+  targetScore = scoreTargets[i];
+  document.getElementById("tsVal").textContent = targetScore;
+});
+document.getElementById("startBtn").addEventListener("click", startGame);
+
+// ---------- Movement helpers ----------
+function canMove(ent, dir) {
+  const d = DIRS[dir];
+  const nr = ent.r + d.y, nc = ent.c + d.x;
+  return !isWall(nr, nc);
+}
+
+function moveEntity(ent, speed, chooseDir) {
+  ent.prog = ent.prog || 0;
+  if (!canMove(ent, ent.dir)) {
+    ent.prog = 0;
+  } else {
+    ent.prog += speed;
+  }
+  while (ent.prog >= 1) {
+    ent.prog -= 1;
+    const d = DIRS[ent.dir];
+    ent.c += d.x; ent.r += d.y;
+    if (ent.onTile) ent.onTile();
+    ent.dir = chooseDir(ent);
+    if (!canMove(ent, ent.dir)) { ent.prog = 0; break; }
+  }
+  const d = DIRS[ent.dir];
+  ent.x = ent.c + d.x * ent.prog;
+  ent.y = ent.r + d.y * ent.prog;
+}
+
+function playerChooseDir(p) {
+  if (canMove(p, p.want)) return p.want;
+  if (canMove(p, p.dir)) return p.dir;
+  return p.dir; // stilstand
+}
+
+function ghostChooseDir(g) {
+  const options = Object.keys(DIRS).filter(d => canMove(g, d));
+  // geen directe terugkeer tenzij doodlopend
+  const noBack = options.filter(d => {
+    const dd = DIRS[d];
+    return !(dd.x === -DIRS[g.dir].x && dd.y === -DIRS[g.dir].y);
+  });
+  const pool = noBack.length ? noBack : options;
+  if (!pool.length) return g.dir;
+  // achtervolg dichtstbijzijnde speler (of zwervend als bang)
+  if (frightTimer > 0) return pool[Math.floor(Math.random() * pool.length)];
+  let best = pool[0], bestD = Infinity;
+  const target = players[(frame % 240 < 120) ? 0 : 1];
+  for (const d of pool) {
+    const dd = DIRS[d];
+    const dist = Math.abs(g.c + dd.x - target.c) + Math.abs(g.r + dd.y - target.r);
+    if (dist < bestD) { bestD = dist; best = d; }
+  }
+  return best;
+}
+
+// ---------- Gameplay events ----------
+function onPlayerTile(p) {
+  const cell = dots[p.r] && dots[p.r][p.c];
+  if (cell === 1) {
+    dots[p.r][p.c] = 0; pelletsLeft--;
+    p.score += frightTimer > 0 ? 2 : 1;
+  } else if (cell === 2) {
+    dots[p.r][p.c] = 0; pelletsLeft--;
+    p.power = 480; frightTimer = 480;
+    msg = p.name + " is JAGER!"; msgTimer = 120;
+    for (const g of ghosts) {
+      const dd = DIRS[g.dir];
+      g.dir = (dd.x === 1) ? "left" : (dd.x === -1) ? "right" : (dd.y === 1) ? "up" : "down";
+    }
+  }
+  if (pelletsLeft <= 0) {
+    makeDots();
+    msg = "Doolhof gevuld!"; msgTimer = 120;
+  }
+}
+
+function checkCollisions() {
+  // speler vs speler
+  const [a, b] = players;
+  const dist = Math.abs(a.x - b.x) + Math.abs(a.y - b.y);
+  if (dist < 0.7) {
+    if (a.power > 0 && b.power === 0) hit(a, b);
+    else if (b.power > 0 && a.power === 0) hit(b, a);
+  }
+  // speler vs spook
+  for (const p of players) {
+    if (p.dead > 0) continue;
+    for (const g of ghosts) {
+      if (Math.abs(p.x - g.x) + Math.abs(p.y - g.y) < 0.7) {
+        if (frightTimer > 0) {
+          g.r = 11; g.c = (g.color === GHOST_COLORS[1] || g.color === GHOST_COLORS[3]) ? 15 : 12;
+          g.dir = "up"; g.prog = 0;
+          p.score += 20;
+          msg = p.name + " ving een spook! +20"; msgTimer = 120;
+        } else {
+          killPlayer(p);
+        }
+      }
+    }
+  }
+}
+
+function hit(hunter, prey) {
+  const steal = Math.min(prey.score, 30);
+  prey.score -= steal;
+  hunter.score += steal + 20;
+  killPlayer(prey);
+  msg = hunter.name + " at " + prey.name + "! +" + (steal + 20); msgTimer = 150;
+}
+
+function killPlayer(p) {
+  p.dead = 120;
+  p.r = p.home.r; p.c = p.home.c; p.prog = 0;
+  p.dir = p.id === 0 ? "right" : "left";
+  p.want = p.dir;
+  p.power = 0;
+}
+
+function checkWin() {
+  for (const p of players) {
+    if (p.score >= targetScore) { winner = p; state = "over"; }
+  }
+}
+
+// ---------- Rendering ----------
+function drawMaze() {
+  ctx.fillStyle = "#000";
+  ctx.fillRect(0, 0, W, H);
+  ctx.strokeStyle = "#2121de";
+  ctx.lineWidth = Math.max(2, TILE * 0.14);
+  ctx.lineCap = "round";
+  for (let r = 0; r < ROWS; r++) {
+    for (let c = 0; c < COLS; c++) {
+      if (MAZE[r][c] !== "#") continue;
+      const x = OX + c * TILE, y = OY + r * TILE;
+      // teken muursegmenten naar buur-muren
+      const seg = (r2, c2) => r2 >= 0 && r2 < ROWS && c2 >= 0 && c2 < COLS && MAZE[r2][c2] === "#";
+      ctx.beginPath();
+      const m = TILE / 2;
+      if (seg(r - 1, c)) { ctx.moveTo(x + m, y); ctx.lineTo(x + m, y + m); }
+      if (seg(r + 1, c)) { ctx.moveTo(x + m, y + m); ctx.lineTo(x + m, y + TILE); }
+      if (seg(r, c - 1)) { ctx.moveTo(x, y + m); ctx.lineTo(x + m, y + m); }
+      if (seg(r, c + 1)) { ctx.moveTo(x + m, y + m); ctx.lineTo(x + TILE, y + m); }
+      if (!seg(r-1,c) && !seg(r+1,c) && !seg(r,c-1) && !seg(r,c+1)) {
+        ctx.moveTo(x + m, y + m); ctx.lineTo(x + m, y + m + 0.1);
+      }
+      ctx.stroke();
+    }
+  }
+  // spookhuisdeur
+  ctx.strokeStyle = "#ffb8de";
+  for (let r = 0; r < ROWS; r++) for (let c = 0; c < COLS; c++) {
+    if (MAZE[r][c] === "-") {
+      const x = OX + c * TILE, y = OY + r * TILE;
+      ctx.lineWidth = Math.max(2, TILE * 0.12);
+      ctx.beginPath(); ctx.moveTo(x, y + TILE / 2); ctx.lineTo(x + TILE, y + TILE / 2); ctx.stroke();
+    }
+  }
+}
+
+function drawDots() {
+  ctx.fillStyle = "#ffd9a8";
+  const dr = Math.max(1.5, TILE * 0.09);
+  for (let r = 0; r < ROWS; r++) for (let c = 0; c < COLS; c++) {
+    if (dots[r][c] === 1) {
+      ctx.beginPath();
+      ctx.arc(OX + c * TILE + TILE / 2, OY + r * TILE + TILE / 2, dr, 0, Math.PI * 2);
+      ctx.fill();
+    } else if (dots[r][c] === 2) {
+      const pulse = 1 + 0.25 * Math.sin(frame * 0.15);
+      ctx.fillStyle = "#ffd9a8";
+      ctx.beginPath();
+      ctx.arc(OX + c * TILE + TILE / 2, OY + r * TILE + TILE / 2, Math.max(3, TILE * 0.26) * pulse, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = "#ffd9a8";
+    }
+  }
+}
+
+function drawPacman(p) {
+  if (p.dead > 0 && Math.floor(p.dead / 8) % 2 === 0) return; // knipperen
+  const x = OX + p.x * TILE + TILE / 2, y = OY + p.y * TILE + TILE / 2;
+  const R = TILE * 0.42;
+  const ang = Math.atan2(DIRS[p.dir].y, DIRS[p.dir].x);
+  const open = (0.25 + 0.2 * Math.abs(Math.sin(frame * 0.25))) * Math.PI;
+  ctx.fillStyle = p.color;
+  ctx.beginPath();
+  ctx.moveTo(x, y);
+  ctx.arc(x, y, R, ang + open, ang - open + Math.PI * 2);
+  ctx.closePath();
+  ctx.fill();
+  if (p.power > 0) {
+    ctx.strokeStyle = "#fff"; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.arc(x, y, R + 3, 0, Math.PI * 2); ctx.stroke();
+  }
+}
+
+function drawGhost(g) {
+  const x = OX + g.x * TILE + TILE / 2, y = OY + g.y * TILE + TILE / 2;
+  const R = TILE * 0.4;
+  const scared = frightTimer > 0;
+  const flashing = frightTimer > 0 && frightTimer < 120 && Math.floor(frightTimer / 15) % 2 === 0;
+  ctx.fillStyle = scared ? (flashing ? "#fff" : "#2121de") : g.color;
+  ctx.beginPath();
+  ctx.arc(x, y - R * 0.1, R, Math.PI, 0);
+  ctx.lineTo(x + R, y + R * 0.7);
+  // golfjes onderaan
+  const w = (R * 2) / 4;
+  for (let i = 0; i < 4; i++) {
+    const wx = x + R - i * w;
+    ctx.quadraticCurveTo(wx - w / 2, y + R * 0.7 - R * 0.35, wx - w, y + R * 0.7);
+  }
+  ctx.closePath();
+  ctx.fill();
+  // ogen
+  const dd = DIRS[g.dir];
+  ctx.fillStyle = "#fff";
+  ctx.beginPath();
+  ctx.arc(x - R * 0.35, y - R * 0.15, R * 0.28, 0, Math.PI * 2);
+  ctx.arc(x + R * 0.35, y - R * 0.15, R * 0.28, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = scared ? "#2121de" : "#1a1aff";
+  ctx.beginPath();
+  ctx.arc(x - R * 0.35 + dd.x * R * 0.1, y - R * 0.15 + dd.y * R * 0.1, R * 0.14, 0, Math.PI * 2);
+  ctx.arc(x + R * 0.35 + dd.x * R * 0.1, y - R * 0.15 + dd.y * R * 0.1, R * 0.14, 0, Math.PI * 2);
+  ctx.fill();
+}
+
+function drawHUD() {
+  ctx.font = "bold " + Math.max(14, TILE * 0.8) + "px 'Courier New', monospace";
+  ctx.textAlign = "left";
+  ctx.fillStyle = "#ffe14d";
+  ctx.fillText("P1 " + players[0].score, OX, OY - Math.max(10, TILE * 0.5));
+  ctx.textAlign = "right";
+  ctx.fillStyle = "#ff9de2";
+  ctx.fillText(players[1].score + " P2", OX + COLS * TILE, OY - Math.max(10, TILE * 0.5));
+  ctx.textAlign = "center";
+  ctx.fillStyle = "#888";
+  ctx.fillText("doel " + targetScore, OX + COLS * TILE / 2, OY - Math.max(10, TILE * 0.5));
+  if (msgTimer > 0) {
+    ctx.fillStyle = frightTimer > 0 ? "#fff" : "#7fdbff";
+    ctx.font = "bold " + Math.max(16, TILE * 0.9) + "px 'Courier New', monospace";
+    ctx.fillText(msg, W / 2, OY + ROWS * TILE + Math.max(24, TILE * 1.4));
+  }
+}
+
+function drawOverlay() {
+  ctx.fillStyle = "rgba(0,0,0,0.75)";
+  ctx.fillRect(0, 0, W, H);
+  ctx.textAlign = "center";
+  ctx.fillStyle = winner.color;
+  ctx.font = "bold " + Math.max(30, W * 0.08) + "px 'Courier New', monospace";
+  ctx.fillText(winner.name + " WINT!", W / 2, H / 2 - 20);
+  ctx.fillStyle = "#ccc";
+  ctx.font = Math.max(16, W * 0.035) + "px 'Courier New', monospace";
+  ctx.fillText("P1 geel: " + players[0].score + "   P2 roze: " + players[1].score, W / 2, H / 2 + 30);
+  ctx.fillStyle = "#ffe14d";
+  ctx.fillText("Tik om opnieuw te spelen", W / 2, H / 2 + 80);
+}
+
+// ---------- Main loop ----------
+let last = 0;
+function loop(ts) {
+  requestAnimationFrame(loop);
+  const dt = Math.min((ts - last) / 16.667, 3); // genormaliseerd op 60fps
+  last = ts;
+  frame++;
+
+  if (state === "play") {
+    if (msgTimer > 0) msgTimer--;
+    if (frightTimer > 0) {
+      frightTimer--;
+      if (frightTimer === 0) for (const p of players) p.power = 0;
+    }
+    for (const p of players) {
+      if (p.dead > 0) { p.dead--; if (p.dead === 0) { p.power = 0; } continue; }
+      if (p.power > 0) p.power--;
+      // direct omdraaien halverwege een tegel
+      const opp = { up: "down", down: "up", left: "right", right: "left" }[p.dir];
+      if (p.want === opp && p.prog > 0) {
+        p.dir = p.want;
+        p.prog = 1 - p.prog;
+      }
+      p.onTile = () => onPlayerTile(p);
+      moveEntity(p, 0.13 * dt, playerChooseDir);
+    }
+    for (const g of ghosts) {
+      g.onTile = null;
+      moveEntity(g, (frightTimer > 0 ? 0.075 : 0.105) * dt, ghostChooseDir);
+    }
+    checkCollisions();
+    checkWin();
+  }
+
+  ctx.clearRect(0, 0, W, H);
+  if (state === "play" || state === "over") {
+    if (state === "over") { /* teken laatste stand onder overlay */ }
+    drawMaze();
+    drawDots();
+    for (const g of ghosts) drawGhost(g);
+    for (const p of players) drawPacman(p);
+    drawHUD();
+    if (state === "over") drawOverlay();
+  }
+}
+
+makeDots(); spawnPlayers(); spawnGhosts();
+state = "menu";
+requestAnimationFrame(loop);
+
+// tik om opnieuw te starten na game over
+canvas.addEventListener("touchend", () => { if (state === "over") startGame(); }, { passive: true });
+canvas.addEventListener("click", () => { if (state === "over") startGame(); });
+</script>
+</body>
+</html>
